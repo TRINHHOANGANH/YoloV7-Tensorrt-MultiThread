@@ -79,7 +79,7 @@ class YoLov7TRT(object):
     def __init__(self, engine_file_path):
         # Create a Context on this device,
         self.ctx = cuda.Device(0).make_context()
-        stream = cuda.Stream()
+        # stream = cuda.Stream()
         TRT_LOGGER = trt.Logger(trt.Logger.INFO)
         runtime = trt.Runtime(TRT_LOGGER)
 
@@ -114,7 +114,7 @@ class YoLov7TRT(object):
                 cuda_outputs.append(cuda_mem)
 
         # Store
-        self.stream = stream
+        # self.stream = stream
         self.context = context
         self.engine = engine
         self.host_inputs = host_inputs
@@ -124,12 +124,13 @@ class YoLov7TRT(object):
         self.bindings = bindings
         self.batch_size = engine.max_batch_size
 
-    def infer(self, raw_image_generator):
+    def infer(self, raw_image_generator, stream):
         threading.Thread.__init__(self)
         # Make self the active context, pushing it on top of the context stack.
         self.ctx.push()
         # Restore
-        stream = self.stream
+        # stream = self.stream
+        # stream = cuda.Stream()
         context = self.context
         engine = self.engine
         host_inputs = self.host_inputs
@@ -163,7 +164,7 @@ class YoLov7TRT(object):
         stream.synchronize()
         end = time.time()
         # Remove any context from the top of the context stack, deactivating it.
-        self.ctx.pop()
+        # self.ctx.pop()
         # Here we use the first row of output in that batch_size = 1
         output = host_outputs[0]
         # Do postprocess
@@ -171,7 +172,7 @@ class YoLov7TRT(object):
             result_boxes, result_scores, result_classid = self.post_process(
                 output[i * 6001: (i + 1) * 6001], batch_origin_h[i], batch_origin_w[i]
             )
-            print("result_boxes", result_boxes)
+            # print("result_boxes", result_boxes)
             # Draw rectangles and labels on the original image
             for j in range(len(result_boxes)):
                 box = result_boxes[j]
@@ -182,6 +183,7 @@ class YoLov7TRT(object):
                         categories[int(result_classid[j])], result_scores[j]
                     ),
                 )
+        self.ctx.pop()
         return batch_image_raw, end - start
 
     def destroy(self):
@@ -383,6 +385,7 @@ class inferThread(threading.Thread):
         self.yolov7_wrapper = yolov7_wrapper
         self.path_video = path_video
         self.name = name
+        self.stream = cuda.Stream()
 
     def run(self):
         cap = cv2.VideoCapture(self.path_video)
@@ -393,7 +396,7 @@ class inferThread(threading.Thread):
                 cap = cv2.VideoCapture(self.path_video)
                 continue
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            batch_image_raw, use_time = self.yolov7_wrapper.infer([frame_rgb])
+            batch_image_raw, use_time = self.yolov7_wrapper.infer([frame_rgb], self.stream)
             frame_count = frame_count + 1
             # batch_image_raw, use_time = self.yolov7_wrapper.infer(self.yolov7_wrapper.get_raw_image(self.image_path_batch))
             print('Frame->{}, time->{:.2f}ms, saving into output/ ----- ThreadName {}'.format(frame_count, use_time * 1000, self.name))
@@ -403,9 +406,10 @@ class warmUpThread(threading.Thread):
     def __init__(self, yolov7_wrapper):
         threading.Thread.__init__(self)
         self.yolov7_wrapper = yolov7_wrapper
+        self.stream = cuda.Stream()
 
     def run(self):
-        batch_image_raw, use_time = self.yolov7_wrapper.infer(self.yolov7_wrapper.get_raw_image_zeros())
+        batch_image_raw, use_time = self.yolov7_wrapper.infer(self.yolov7_wrapper.get_raw_image_zeros(), self.stream)
         print('warm_up->{}, time->{:.2f}ms'.format(batch_image_raw[0].shape, use_time * 1000))
 
 
@@ -442,17 +446,17 @@ def load_tensorrt_plugin(device_idx=None) -> bool:
 if __name__ == "__main__":
     # load custom plugin and engine
     PLUGIN_LIBRARY = "build/libmyplugins.so"
-    engine_file_path = "build/yolov7.engine"
+    engine_file_path = "build/yolov7_tiny.engine"
 
     if len(sys.argv) > 1:
         engine_file_path = sys.argv[1]
     if len(sys.argv) > 2:
         PLUGIN_LIBRARY = sys.argv[2]
 
-    load_tensorrt_plugin(2)
+    # load_tensorrt_plugin(2)
 
 
-    # ctypes.CDLL(PLUGIN_LIBRARY)
+    ctypes.CDLL(PLUGIN_LIBRARY)
 
 
 
@@ -479,11 +483,11 @@ if __name__ == "__main__":
         image_dir = "samples/"
         image_path_batches = get_img_path_batches(yolov7_wrapper.batch_size, image_dir)
 
-        # for i in range(10):
-        #     # create a new thread to do warm_up
-        #     thread1 = warmUpThread(yolov7_wrapper)
-        #     thread1.start()
-        #     thread1.join()
+        for i in range(10):
+            # create a new thread to do warm_up
+            thread1 = warmUpThread(yolov7_wrapper)
+            thread1.start()
+            thread1.join()
         # for batch in image_path_batches:
             # create a new thread to do inference
         path_video = "data_video/20220722_095149_CAM2.mp4"
